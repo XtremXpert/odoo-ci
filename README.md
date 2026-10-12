@@ -318,3 +318,10 @@ python scripts/odoo_log_to_junit.py test-output.log -o junit-report.xml
 ### build.sh
 
 Builds production and test Docker images. Called by the CI pipeline.
+
+## GitHub: diverse-odoo test image
+
+`test-image/` builds the job image of diverse-odoo's GitHub `tests.yml` gate,
+published as `ghcr.io/xtremxpert/odoo-ci:20.0` by
+`.github/workflows/test-image.yml`. It is unrelated to the GitLab pipeline and
+to the root `Dockerfile`. See [`test-image/README.md`](test-image/README.md).
