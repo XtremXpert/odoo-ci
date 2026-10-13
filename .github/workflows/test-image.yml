@@ -1,0 +1,88 @@
+# Image de test Odoo 20 de diverse-odoo : test-image/Dockerfile
+#   → ghcr.io/xtremxpert/odoo-ci:20.0 (paquet public, image de job du gate
+#   tests.yml de diverse-cite-com/diverse-odoo).
+#
+# Reprise du workflow ci-image-20.yml de diverse-odoo (2026-10-12) : le jeton
+# d'un dépôt de diverse-cite-com ne peut pas publier chez XtremXpert, d'où la
+# construction ici, avec le GITHUB_TOKEN de ce dépôt. L'image ne contient aucun
+# fichier du dépôt (test-image/Dockerfile n'a ni COPY ni ADD) : elle ne se
+# reconstruit que quand test-image/ change, ou à la main. Aucun secret, aucun
+# déploiement.
+
+name: test-image
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - test-image/**
+      - .github/workflows/test-image.yml
+  workflow_dispatch:
+
+concurrency:
+  group: test-image
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  # En minuscules : ghcr.io refuse les majuscules du propriétaire (XtremXpert).
+  CI_IMAGE: ghcr.io/xtremxpert/odoo-ci
+  CI_IMAGE_TAG: "20.0"
+
+jobs:
+  test-image:
+    name: test-image
+    runs-on: arc-odoo-ci
+    timeout-minutes: 60
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Make DOCKER_CONFIG writable
+        run: |
+          set -euo pipefail
+          AUTH_DIR="${RUNNER_TEMP}/docker-auth"
+          mkdir -p "$AUTH_DIR"
+          chmod 700 "$AUTH_DIR"
+          if [ -n "${DOCKER_CONFIG:-}" ] && [ -f "${DOCKER_CONFIG}/config.json" ]; then
+            cp "${DOCKER_CONFIG}/config.json" "${AUTH_DIR}/config.json"
+            chmod 600 "${AUTH_DIR}/config.json"
+          fi
+          echo "DOCKER_CONFIG=${AUTH_DIR}" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Build and publish the test image
+        run: |
+          set -euo pipefail
+          docker build \
+            --file test-image/Dockerfile \
+            --tag "${CI_IMAGE}:${CI_IMAGE_TAG}" \
+            --tag "${CI_IMAGE}:${CI_IMAGE_TAG}-${GITHUB_SHA}" \
+            test-image
+          docker run --rm --entrypoint /bin/bash "${CI_IMAGE}:${CI_IMAGE_TAG}" -euxo pipefail -c '
+            odoo --version | grep -E "Odoo Server 20[.]0"
+            python3 -c "import pytz; pytz.timezone(\"America/Knox_IN\")"
+            ffmpeg -version >/dev/null  # booth360_postprocess : external_dependencies bin
+          '
+          docker push "${CI_IMAGE}:${CI_IMAGE_TAG}"
+          docker push "${CI_IMAGE}:${CI_IMAGE_TAG}-${GITHUB_SHA}"
+          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${CI_IMAGE}:${CI_IMAGE_TAG}" | sed 's/^[^@]*@//')"
+          {
+            echo "### test image"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| image | \`${CI_IMAGE}:${CI_IMAGE_TAG}\` — paquet public |"
+            echo "| digest | \`${DIGEST}\` |"
+            echo "| commit | \`${GITHUB_SHA}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
